@@ -1,0 +1,57 @@
+packages/hydrogen-react/package.json
+  aae51b48bdd52925 180-181
+packages/hydrogen-react/vite.config.ts
+  aae51b48bdd52925 70
+packages/hydrogen-react/src/useCartAPIStateMachine.tsx
+  f78fa03e3b9d773b 11,42,45,48,54,134,259,267,275,286,297,308,319,336,349,367,377-378,385,513,515
+  aae51b48bdd52925 2,6,15,35-37,39,41,43-44,47,50-53,56-57,60,62-64,66-69,71-78,81,83-94,96-97,99-111,113-116,119,121-122,124,126-127,129,131-133,135-143,146,148-149,151,153-154,156,158-159,161,163-164,166,168-169,171,173-174,176,178-179,181-185,189-193,201,205,219-220,255,257-258,260-262,265-266,268-270,272-274,276-281,283-285,287-292,294,296,302-303,305-307,309-314,316-318,320-325,329,331,334-335,338-339,341-342,344-348,350-355,359,361-363,365-366,368-369,371,373,375-376,381,383-384,386-387,389,391-392,446,448-449,456,459,462
+  d07deb51af1371ed 24-30,33,38,46,49,55,61,79,95,112,118,123,128,145,150,155,160,165,170,175,180,186,199-200,203-204,207,210,224-227,240-241,252,256,263,271,282,293,304,315,326,343,356,364,370,374,379,382,388,432,440,444,447
+packages/hydrogen-react/src/cart-types.ts
+  aae51b48bdd52925 270-273,275-279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "0251da0cc920873f72e3484d8e954cbf404cbf0a",
+  "prompts": {
+    "aae51b48bdd52925": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "84c2b163-2a21-43d4-94b3-98b1f1192113",
+        "model": "claude-4.6-opus-high-thinking"
+      },
+      "human_author": "NexPB <1289189+NexPB@users.noreply.github.com>",
+      "messages": [],
+      "total_additions": 372,
+      "total_deletions": 367,
+      "accepted_lines": 236,
+      "overriden_lines": 17
+    },
+    "d07deb51af1371ed": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "938ef94a-34d7-4c7f-af32-79e4066f775b",
+        "model": "claude-4.6-opus-high-thinking"
+      },
+      "human_author": "NexPB <1289189+NexPB@users.noreply.github.com>",
+      "messages": [],
+      "total_additions": 142,
+      "total_deletions": 125,
+      "accepted_lines": 86,
+      "overriden_lines": 3
+    },
+    "f78fa03e3b9d773b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "cca07bb9-425b-41e5-a857-21f280341d68",
+        "model": "claude-4.6-opus-high-thinking"
+      },
+      "human_author": "NexPB <1289189+NexPB@users.noreply.github.com>",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 21,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    }
+  }
+}
