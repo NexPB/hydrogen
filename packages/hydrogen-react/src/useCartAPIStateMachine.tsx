@@ -1,182 +1,395 @@
-import {useMachine} from '@xstate/react/fsm';
-import {createMachine, assign, StateMachine} from '@xstate/fsm';
+import {createMachine, state, transition, reduce, action} from 'robot3';
+import {useMachine} from 'react-robot';
 import {
   Cart,
   CartMachineActionEvent,
-  CartMachineActions,
+  CartMachineCompatState,
   CartMachineContext,
   CartMachineEvent,
   CartMachineFetchResultEvent,
   CartMachineTypeState,
+  CartSetEvent,
 } from './cart-types.js';
 import {flattenConnection} from './flatten-connection.js';
 import {useCartActions} from './useCartActions.js';
-import {useMemo} from 'react';
-import {InitEvent} from '@xstate/fsm/lib/types.js';
+import {useMemo, useRef} from 'react';
 import {
   CountryCode,
   Cart as CartType,
   LanguageCode,
 } from './storefront-api-types.js';
+
 import type {PartialDeep} from 'type-fest';
 
-function invokeCart(
-  action: keyof CartMachineActions,
-  options?: {
-    entryActions?: [keyof CartMachineActions];
-    resolveTarget?: CartMachineTypeState['value'];
-    errorTarget?: CartMachineTypeState['value'];
-    exitActions?: [keyof CartMachineActions];
-  },
-): StateMachine.Config<CartMachineContext, CartMachineEvent>['states']['on'] {
-  return {
-    entry: [
-      ...(options?.entryActions || []),
-      assign({
-        lastValidCart: (context) => context?.cart,
-      }),
-      'onCartActionEntry',
-      'onCartActionOptimisticUI',
-      action,
-    ],
-    on: {
-      RESOLVE: {
-        target: options?.resolveTarget || 'idle',
-        actions: [
-          assign({
-            prevCart: (context) => context?.lastValidCart,
-            cart: (_, event) => event?.payload?.cart,
-            rawCartResult: (_, event) => event?.payload?.rawCartResult,
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            errors: (_) => undefined,
-          }),
-        ],
-      },
-      ERROR: {
-        target: options?.errorTarget || 'error',
-        actions: [
-          assign({
-            prevCart: (context) => context?.lastValidCart,
-            cart: (context) => context?.lastValidCart,
-            errors: (_, event) => event?.payload?.errors,
-          }),
-        ],
-      },
-      CART_COMPLETED: {
-        target: 'cartCompleted',
-        actions: assign({
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          prevCart: (_) => undefined,
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          cart: (_) => undefined,
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          lastValidCart: (_) => undefined,
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          rawCartResult: (_) => undefined,
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          errors: (_) => undefined,
-        }),
-      },
-    },
-    exit: ['onCartActionComplete', ...(options?.exitActions || [])],
-  };
+type ActionImpl = (ctx: CartMachineContext, ev: CartMachineEvent) => unknown;
+
+/**
+ * Single mutable bridge between Robot3 (created once via useMemo) and React
+ * (closures refresh every render). Machine action/reduce callbacks read from
+ * this ref at invocation time so they always see the latest `send` and impls.
+ */
+type CartRuntime = {
+  send: (event: CartMachineEvent) => void;
+  impls: Record<string, ActionImpl>;
+};
+
+function entryPipeline(
+  apiActionKey: string,
+  ref: React.RefObject<CartRuntime>,
+): any[] {
+  return [
+    reduce(
+      (ctx: CartMachineContext, _ev: CartMachineActionEvent) =>
+        ({...ctx, lastValidCart: ctx.cart}) as CartMachineContext,
+    ),
+    action((ctx: CartMachineContext, ev: CartMachineActionEvent) => {
+      ref.current?.impls['onCartActionEntry']?.(ctx, ev);
+    }),
+    reduce((ctx: CartMachineContext, ev: CartMachineActionEvent) => {
+      const fn = ref.current?.impls['onCartActionOptimisticUI'];
+      if (!fn) return ctx;
+      const result = fn(ctx, ev);
+      return result ? ({...ctx, ...result} as CartMachineContext) : ctx;
+    }),
+    action((ctx: CartMachineContext, ev: CartMachineActionEvent) => {
+      ref.current?.impls[apiActionKey]?.(ctx, ev);
+    }),
+  ];
 }
 
-const INITIALIZING_CART_EVENTS: StateMachine.Machine<
-  CartMachineContext,
-  CartMachineEvent,
-  CartMachineTypeState
->['config']['states']['uninitialized']['on'] = {
-  CART_FETCH: {
-    target: 'cartFetching',
-  },
-  CART_CREATE: {
-    target: 'cartCreating',
-  },
-  CART_SET: {
-    target: 'idle',
-    actions: [
-      assign({
-        rawCartResult: (_, event) => event.payload.cart,
-        cart: (_, event) => cartFromGraphQL(event.payload.cart),
+function resultTransitions(
+  ref: React.RefObject<CartRuntime>,
+  errorTarget = 'error',
+): any[] {
+  return [
+    transition(
+      'RESOLVE',
+      'idle',
+      reduce(
+        (ctx: CartMachineContext, ev: any) =>
+          ({
+            ...ctx,
+            prevCart: ctx.lastValidCart,
+            cart: ev?.payload?.cart,
+            rawCartResult: ev?.payload?.rawCartResult,
+            errors: undefined,
+          }) as CartMachineContext,
+      ),
+      action((ctx: CartMachineContext, ev: any) => {
+        ref.current?.impls['onCartActionComplete']?.(ctx, ev);
       }),
-    ],
-  },
-};
+    ),
+    transition(
+      'ERROR',
+      errorTarget,
+      reduce(
+        (ctx: CartMachineContext, ev: any) =>
+          ({
+            ...ctx,
+            prevCart: ctx.lastValidCart,
+            cart: ctx.lastValidCart,
+            errors: ev?.payload?.errors,
+          }) as CartMachineContext,
+      ),
+      action((ctx: CartMachineContext, ev: any) => {
+        ref.current?.impls['onCartActionComplete']?.(ctx, ev);
+      }),
+    ),
+    transition(
+      'CART_COMPLETED',
+      'cartCompleted',
+      reduce(
+        () =>
+          ({
+            prevCart: undefined,
+            cart: undefined,
+            lastValidCart: undefined,
+            rawCartResult: undefined,
+            errors: undefined,
+          }) as unknown as CartMachineContext,
+      ),
+      action((ctx: CartMachineContext, ev: any) => {
+        ref.current?.impls['onCartActionComplete']?.(ctx, ev);
+      }),
+    ),
+  ];
+}
 
-const UPDATING_CART_EVENTS: StateMachine.Machine<
-  CartMachineContext,
-  CartMachineEvent,
-  CartMachineTypeState
->['config']['states']['idle']['on'] = {
-  CARTLINE_ADD: {
-    target: 'cartLineAdding',
-  },
-  CARTLINE_UPDATE: {
-    target: 'cartLineUpdating',
-  },
-  CARTLINE_REMOVE: {
-    target: 'cartLineRemoving',
-  },
-  NOTE_UPDATE: {
-    target: 'noteUpdating',
-  },
-  BUYER_IDENTITY_UPDATE: {
-    target: 'buyerIdentityUpdating',
-  },
-  CART_ATTRIBUTES_UPDATE: {
-    target: 'cartAttributesUpdating',
-  },
-  DISCOUNT_CODES_UPDATE: {
-    target: 'discountCodesUpdating',
-  },
-};
+function initTransitions(ref: React.RefObject<CartRuntime>): any[] {
+  return [
+    transition(
+      'CART_FETCH',
+      'cartFetching',
+      ...entryPipeline('cartFetchAction', ref),
+    ),
+    transition(
+      'CART_CREATE',
+      'cartCreating',
+      ...entryPipeline('cartCreateAction', ref),
+    ),
+    transition(
+      'CART_SET',
+      'idle',
+      reduce(
+        (_ctx: CartMachineContext, ev: CartSetEvent) =>
+          ({
+            ..._ctx,
+            rawCartResult: ev.payload.cart,
+            cart: cartFromGraphQL(ev.payload.cart),
+          }) as CartMachineContext,
+      ),
+    ),
+  ];
+}
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-function createCartMachine(
+function updateTransitions(ref: React.RefObject<CartRuntime>): any[] {
+  return [
+    transition(
+      'CARTLINE_ADD',
+      'cartLineAdding',
+      ...entryPipeline('cartLineAddAction', ref),
+    ),
+    transition(
+      'CARTLINE_UPDATE',
+      'cartLineUpdating',
+      ...entryPipeline('cartLineUpdateAction', ref),
+    ),
+    transition(
+      'CARTLINE_REMOVE',
+      'cartLineRemoving',
+      ...entryPipeline('cartLineRemoveAction', ref),
+    ),
+    transition(
+      'NOTE_UPDATE',
+      'noteUpdating',
+      ...entryPipeline('noteUpdateAction', ref),
+    ),
+    transition(
+      'BUYER_IDENTITY_UPDATE',
+      'buyerIdentityUpdating',
+      ...entryPipeline('buyerIdentityUpdateAction', ref),
+    ),
+    transition(
+      'CART_ATTRIBUTES_UPDATE',
+      'cartAttributesUpdating',
+      ...entryPipeline('cartAttributesUpdateAction', ref),
+    ),
+    transition(
+      'DISCOUNT_CODES_UPDATE',
+      'discountCodesUpdating',
+      ...entryPipeline('discountCodesUpdateAction', ref),
+    ),
+  ];
+}
+
+function buildCartMachine(
+  ref: React.RefObject<CartRuntime>,
   initialCart?: PartialDeep<CartType, {recurseIntoArrays: true}>,
 ) {
-  return createMachine<
-    CartMachineContext,
-    CartMachineEvent,
-    CartMachineTypeState
-  >({
-    id: 'Cart',
-    initial: initialCart ? 'idle' : 'uninitialized',
-    context: {
-      cart: initialCart && cartFromGraphQL(initialCart),
+  const initialState = initialCart ? 'idle' : 'uninitialized';
+  const initialContext: CartMachineContext = {
+    cart: initialCart ? cartFromGraphQL(initialCart) : undefined,
+  };
+
+  const states = {
+    uninitialized: state(...initTransitions(ref)),
+    cartCompleted: state(...initTransitions(ref)),
+    initializationError: state(...initTransitions(ref)),
+    idle: state(
+      ...initTransitions(ref),
+      ...updateTransitions(ref),
+    ),
+    error: state(
+      ...initTransitions(ref),
+      ...updateTransitions(ref),
+    ),
+    cartFetching: state(
+      ...resultTransitions(ref, 'initializationError'),
+    ),
+    cartCreating: state(
+      ...resultTransitions(ref, 'initializationError'),
+    ),
+    cartLineRemoving: state(...resultTransitions(ref)),
+    cartLineUpdating: state(...resultTransitions(ref)),
+    cartLineAdding: state(...resultTransitions(ref)),
+    noteUpdating: state(...resultTransitions(ref)),
+    buyerIdentityUpdating: state(...resultTransitions(ref)),
+    cartAttributesUpdating: state(...resultTransitions(ref)),
+    discountCodesUpdating: state(...resultTransitions(ref)),
+  };
+
+  return createMachine(initialState, states, () => initialContext);
+}
+
+function createActionImpls(
+  cartActions: ReturnType<typeof useCartActions>,
+  runtime: React.RefObject<CartRuntime>,
+  callbacks: {
+    onCartActionEntry?: (
+      context: CartMachineContext,
+      event: CartMachineActionEvent,
+    ) => void;
+    onCartActionOptimisticUI?: (
+      context: CartMachineContext,
+      event: CartMachineEvent,
+    ) => Partial<CartMachineContext>;
+    onCartActionComplete?: (
+      context: CartMachineContext,
+      event: CartMachineFetchResultEvent,
+    ) => void;
+  },
+): Record<string, ActionImpl> {
+  const {
+    cartFetch,
+    cartCreate,
+    cartLineAdd,
+    cartLineUpdate,
+    cartLineRemove,
+    noteUpdate,
+    buyerIdentityUpdate,
+    cartAttributesUpdate,
+    discountCodesUpdate,
+  } = cartActions;
+
+  const send = (ev: CartMachineEvent) => runtime.current?.send(ev);
+
+  return {
+    cartFetchAction: async (
+      _: CartMachineContext,
+      event: CartMachineEvent,
+    ) => {
+      if (event.type !== 'CART_FETCH') return;
+      const {data, errors} = await cartFetch(event.payload.cartId);
+      send(eventFromFetchResult(event, data?.cart, errors));
     },
-    states: {
-      uninitialized: {
-        on: INITIALIZING_CART_EVENTS,
-      },
-      cartCompleted: {
-        on: INITIALIZING_CART_EVENTS,
-      },
-      initializationError: {
-        on: INITIALIZING_CART_EVENTS,
-      },
-      idle: {
-        on: {...INITIALIZING_CART_EVENTS, ...UPDATING_CART_EVENTS},
-      },
-      error: {
-        on: {...INITIALIZING_CART_EVENTS, ...UPDATING_CART_EVENTS},
-      },
-      cartFetching: invokeCart('cartFetchAction', {
-        errorTarget: 'initializationError',
-      }),
-      cartCreating: invokeCart('cartCreateAction', {
-        errorTarget: 'initializationError',
-      }),
-      cartLineRemoving: invokeCart('cartLineRemoveAction'),
-      cartLineUpdating: invokeCart('cartLineUpdateAction'),
-      cartLineAdding: invokeCart('cartLineAddAction'),
-      noteUpdating: invokeCart('noteUpdateAction'),
-      buyerIdentityUpdating: invokeCart('buyerIdentityUpdateAction'),
-      cartAttributesUpdating: invokeCart('cartAttributesUpdateAction'),
-      discountCodesUpdating: invokeCart('discountCodesUpdateAction'),
+    cartCreateAction: async (
+      _: CartMachineContext,
+      event: CartMachineEvent,
+    ) => {
+      if (event.type !== 'CART_CREATE') return;
+      const {data, errors} = await cartCreate(event.payload);
+      send(eventFromFetchResult(event, data?.cartCreate?.cart, errors));
     },
-  });
+    cartLineAddAction: async (
+      context: CartMachineContext,
+      event: CartMachineEvent,
+    ) => {
+      if (event.type !== 'CARTLINE_ADD' || !context?.cart?.id) return;
+      const {data, errors} = await cartLineAdd(
+        context.cart.id,
+        event.payload.lines,
+      );
+      send(eventFromFetchResult(event, data?.cartLinesAdd?.cart, errors));
+    },
+    cartLineUpdateAction: async (
+      context: CartMachineContext,
+      event: CartMachineEvent,
+    ) => {
+      if (event.type !== 'CARTLINE_UPDATE' || !context?.cart?.id) return;
+      const {data, errors} = await cartLineUpdate(
+        context.cart.id,
+        event.payload.lines,
+      );
+      send(eventFromFetchResult(event, data?.cartLinesUpdate?.cart, errors));
+    },
+    cartLineRemoveAction: async (
+      context: CartMachineContext,
+      event: CartMachineEvent,
+    ) => {
+      if (event.type !== 'CARTLINE_REMOVE' || !context?.cart?.id) return;
+      const {data, errors} = await cartLineRemove(
+        context.cart.id,
+        event.payload.lines,
+      );
+      send(eventFromFetchResult(event, data?.cartLinesRemove?.cart, errors));
+    },
+    noteUpdateAction: async (
+      context: CartMachineContext,
+      event: CartMachineEvent,
+    ) => {
+      if (event.type !== 'NOTE_UPDATE' || !context?.cart?.id) return;
+      const {data, errors} = await noteUpdate(
+        context.cart.id,
+        event.payload.note,
+      );
+      send(eventFromFetchResult(event, data?.cartNoteUpdate?.cart, errors));
+    },
+    buyerIdentityUpdateAction: async (
+      context: CartMachineContext,
+      event: CartMachineEvent,
+    ) => {
+      if (event.type !== 'BUYER_IDENTITY_UPDATE' || !context?.cart?.id) return;
+      const {data, errors} = await buyerIdentityUpdate(
+        context.cart.id,
+        event.payload.buyerIdentity,
+      );
+      send(
+        eventFromFetchResult(
+          event,
+          data?.cartBuyerIdentityUpdate?.cart,
+          errors,
+        ),
+      );
+    },
+    cartAttributesUpdateAction: async (
+      context: CartMachineContext,
+      event: CartMachineEvent,
+    ) => {
+      if (event.type !== 'CART_ATTRIBUTES_UPDATE' || !context?.cart?.id) return;
+      const {data, errors} = await cartAttributesUpdate(
+        context.cart.id,
+        event.payload.attributes,
+      );
+      send(
+        eventFromFetchResult(event, data?.cartAttributesUpdate?.cart, errors),
+      );
+    },
+    discountCodesUpdateAction: async (
+      context: CartMachineContext,
+      event: CartMachineEvent,
+    ) => {
+      if (event.type !== 'DISCOUNT_CODES_UPDATE' || !context?.cart?.id) return;
+      const {data, errors} = await discountCodesUpdate(
+        context.cart.id,
+        event.payload.discountCodes,
+      );
+      send(
+        eventFromFetchResult(
+          event,
+          data?.cartDiscountCodesUpdate?.cart,
+          errors,
+        ),
+      );
+    },
+    ...(callbacks.onCartActionEntry && {
+      onCartActionEntry: (
+        context: CartMachineContext,
+        event: CartMachineEvent,
+      ): void => {
+        if (isCartActionEvent(event)) {
+          callbacks.onCartActionEntry!(context, event);
+        }
+      },
+    }),
+    ...(callbacks.onCartActionOptimisticUI && {
+      onCartActionOptimisticUI: (
+        context: CartMachineContext,
+        event: CartMachineEvent,
+      ): Partial<CartMachineContext> | undefined => {
+        return callbacks.onCartActionOptimisticUI!(context, event);
+      },
+    }),
+    ...(callbacks.onCartActionComplete && {
+      onCartActionComplete: (
+        context: CartMachineContext,
+        event: CartMachineEvent,
+      ): void => {
+        if (isCartFetchResultEvent(event)) {
+          callbacks.onCartActionComplete!(context, event);
+        }
+      },
+    }),
+  };
 }
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -216,185 +429,43 @@ export function useCartAPIStateMachine({
   /** The ISO language code for i18n. */
   languageCode?: LanguageCode;
 }) {
-  const {
-    cartFetch,
-    cartCreate,
-    cartLineAdd,
-    cartLineUpdate,
-    cartLineRemove,
-    noteUpdate,
-    buyerIdentityUpdate,
-    cartAttributesUpdate,
-    discountCodesUpdate,
-  } = useCartActions({
+  const cartActions = useCartActions({
     numCartLines,
     cartFragment,
     countryCode,
     languageCode,
   });
 
-  const cartMachine = useMemo(() => createCartMachine(cart), [cart]);
-
-  const [state, send, service] = useMachine(cartMachine, {
-    actions: {
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      cartFetchAction: async (_, event) => {
-        if (event.type !== 'CART_FETCH') return;
-
-        const {data, errors} = await cartFetch(event?.payload?.cartId);
-        const resultEvent = eventFromFetchResult(event, data?.cart, errors);
-        send(resultEvent);
-      },
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      cartCreateAction: async (_, event) => {
-        if (event.type !== 'CART_CREATE') return;
-
-        const {data, errors} = await cartCreate(event?.payload);
-        const resultEvent = eventFromFetchResult(
-          event,
-          data?.cartCreate?.cart,
-          errors,
-        );
-        send(resultEvent);
-      },
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      cartLineAddAction: async (context, event) => {
-        if (event.type !== 'CARTLINE_ADD' || !context?.cart?.id) return;
-
-        const {data, errors} = await cartLineAdd(
-          context.cart.id,
-          event.payload.lines,
-        );
-
-        const resultEvent = eventFromFetchResult(
-          event,
-          data?.cartLinesAdd?.cart,
-          errors,
-        );
-
-        send(resultEvent);
-      },
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      cartLineUpdateAction: async (context, event) => {
-        if (event.type !== 'CARTLINE_UPDATE' || !context?.cart?.id) return;
-        const {data, errors} = await cartLineUpdate(
-          context.cart.id,
-          event.payload.lines,
-        );
-
-        const resultEvent = eventFromFetchResult(
-          event,
-          data?.cartLinesUpdate?.cart,
-          errors,
-        );
-
-        send(resultEvent);
-      },
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      cartLineRemoveAction: async (context, event) => {
-        if (event.type !== 'CARTLINE_REMOVE' || !context?.cart?.id) return;
-        const {data, errors} = await cartLineRemove(
-          context.cart.id,
-          event.payload.lines,
-        );
-
-        const resultEvent = eventFromFetchResult(
-          event,
-          data?.cartLinesRemove?.cart,
-          errors,
-        );
-
-        send(resultEvent);
-      },
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      noteUpdateAction: async (context, event) => {
-        if (event.type !== 'NOTE_UPDATE' || !context?.cart?.id) return;
-        const {data, errors} = await noteUpdate(
-          context.cart.id,
-          event.payload.note,
-        );
-
-        const resultEvent = eventFromFetchResult(
-          event,
-          data?.cartNoteUpdate?.cart,
-          errors,
-        );
-
-        send(resultEvent);
-      },
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      buyerIdentityUpdateAction: async (context, event) => {
-        if (event.type !== 'BUYER_IDENTITY_UPDATE' || !context?.cart?.id)
-          return;
-        const {data, errors} = await buyerIdentityUpdate(
-          context.cart.id,
-          event.payload.buyerIdentity,
-        );
-
-        const resultEvent = eventFromFetchResult(
-          event,
-          data?.cartBuyerIdentityUpdate?.cart,
-          errors,
-        );
-
-        send(resultEvent);
-      },
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      cartAttributesUpdateAction: async (context, event) => {
-        if (event.type !== 'CART_ATTRIBUTES_UPDATE' || !context?.cart?.id)
-          return;
-        const {data, errors} = await cartAttributesUpdate(
-          context.cart.id,
-          event.payload.attributes,
-        );
-
-        const resultEvent = eventFromFetchResult(
-          event,
-          data?.cartAttributesUpdate?.cart,
-          errors,
-        );
-
-        send(resultEvent);
-      },
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      discountCodesUpdateAction: async (context, event) => {
-        if (event.type !== 'DISCOUNT_CODES_UPDATE' || !context?.cart?.id)
-          return;
-        const {data, errors} = await discountCodesUpdate(
-          context.cart.id,
-          event.payload.discountCodes,
-        );
-        const resultEvent = eventFromFetchResult(
-          event,
-          data?.cartDiscountCodesUpdate?.cart,
-          errors,
-        );
-
-        send(resultEvent);
-      },
-      ...(onCartActionEntry && {
-        onCartActionEntry: (context, event): void => {
-          if (isCartActionEvent(event)) {
-            onCartActionEntry(context, event);
-          }
-        },
-      }),
-      ...(onCartActionOptimisticUI && {
-        onCartActionOptimisticUI: assign((context, event) => {
-          return onCartActionOptimisticUI(context, event);
-        }),
-      }),
-      ...(onCartActionComplete && {
-        onCartActionComplete: (context, event): void => {
-          if (isCartFetchResultEvent(event)) {
-            onCartActionComplete(context, event);
-          }
-        },
-      }),
-    } as CartMachineActions,
+  const runtimeRef = useRef<CartRuntime>({send: () => {}, impls: {}});
+  runtimeRef.current.impls = createActionImpls(cartActions, runtimeRef, {
+    onCartActionEntry,
+    onCartActionOptimisticUI,
+    onCartActionComplete,
   });
 
-  return useMemo(() => [state, send, service] as const, [state, send, service]);
+  const cartMachine = useMemo(
+    () => buildCartMachine(runtimeRef, cart),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cart],
+  );
+
+  const [current, send, service] = useMachine(cartMachine);
+  runtimeRef.current.send = send;
+
+  const memoizedState: CartMachineCompatState = useMemo(
+    () => ({
+      value: current.name as CartMachineTypeState['value'],
+      context: current.context as CartMachineContext,
+      matches: (s: CartMachineTypeState['value']) =>
+        current.name === s,
+    }),
+    [current],
+  );
+
+  return useMemo(
+    () => [memoizedState, send, service] as const,
+    [memoizedState, send, service],
+  );
 }
 
 export function cartFromGraphQL(
@@ -436,10 +507,12 @@ function eventFromFetchResult(
 }
 
 function isCartActionEvent(
-  event: CartMachineEvent | InitEvent,
+  event: CartMachineEvent,
 ): event is CartMachineActionEvent {
   return (
+    event.type === 'CART_FETCH' ||
     event.type === 'CART_CREATE' ||
+    event.type === 'CART_SET' ||
     event.type === 'CARTLINE_ADD' ||
     event.type === 'CARTLINE_UPDATE' ||
     event.type === 'CARTLINE_REMOVE' ||
@@ -451,7 +524,7 @@ function isCartActionEvent(
 }
 
 function isCartFetchResultEvent(
-  event: CartMachineEvent | InitEvent,
+  event: CartMachineEvent,
 ): event is CartMachineFetchResultEvent {
   return (
     event.type === 'RESOLVE' ||
