@@ -1,0 +1,27 @@
+packages/hydrogen/src/vite/plugin.ts
+  030ef4fac1f4beca 93
+packages/hydrogen/src/vite/virtual-routes/components/RequestDetails.tsx
+  030ef4fac1f4beca 5
+packages/hydrogen/src/vite/virtual-routes/components/FlameChartWrapper.tsx
+  030ef4fac1f4beca 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.11",
+  "base_commit_sha": "3ceb31d344ca301c49ec0f2fbf20ed7bcfbb5adf",
+  "prompts": {
+    "030ef4fac1f4beca": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "34b7535e-5c47-4c83-bf38-24dc4d79808c",
+        "model": "premium"
+      },
+      "human_author": "NexPB <1289189+NexPB@users.noreply.github.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 11,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
