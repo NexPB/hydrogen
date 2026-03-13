@@ -1,0 +1,27 @@
+packages/hydrogen-react/src/useCartAPIStateMachine.tsx
+  5a593572b4f2575b 1
+packages/hydrogen-react/vite.config.ts
+  5a593572b4f2575b 70
+packages/hydrogen-react/package.json
+  5a593572b4f2575b 179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "00106621b350105e9076a9b2eb68617495cc0c58",
+  "prompts": {
+    "5a593572b4f2575b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c6f65a40-a07b-4c4c-b3fe-ac8cee10e323",
+        "model": "claude-4.6-opus-high-thinking"
+      },
+      "human_author": "NexPB <1289189+NexPB@users.noreply.github.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 22,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
