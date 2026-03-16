@@ -1,0 +1,27 @@
+packages/hydrogen/src/vite/virtual-routes/components/FlameChartWrapper.tsx
+  030ef4fac1f4beca 14
+packages/hydrogen/src/vite/virtual-routes/components/useResizeObserver.ts
+  030ef4fac1f4beca 2-7,9,11,50
+packages/hydrogen/src/vite/virtual-routes/components/RequestDetails.tsx
+  030ef4fac1f4beca 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "a392fe4f8dc2e8e4a49b9f3ca974d127343b49eb",
+  "prompts": {
+    "030ef4fac1f4beca": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "34b7535e-5c47-4c83-bf38-24dc4d79808c",
+        "model": "premium"
+      },
+      "human_author": "NexPB <1289189+NexPB@users.noreply.github.com>",
+      "messages": [],
+      "total_additions": 165,
+      "total_deletions": 125,
+      "accepted_lines": 30,
+      "overriden_lines": 3
+    }
+  }
+}
